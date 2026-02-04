@@ -1,0 +1,568 @@
+---
+title: ""
+format:
+  typst:
+    toc: false
+    number-sections: false
+    columns: 1
+---
+
+```{r setup,echo=FALSE, include=FALSE}
+# Setup
+knitr::opts_chunk$set(echo = FALSE)
+options(knitr.kable.NA = '')
+
+library(tidyverse)
+library(janitor)
+library(odbc)
+library(english)
+
+# Set the report parameters here
+SurveyYear <- 2009
+dir = paste0(r'(C:\Work\VitalSigns\ARCN Western Yellow-billed Loons\Data\)',SurveyYear)
+
+# Use the below for sequentially numbering tables and figures
+QCCheckCounter = 1
+TableCounter = 1
+FigureCounter = 0 # I don't know why starting at 1 doesn't work
+
+# Project management database connection
+AKROConnection = dbConnect(odbc(),Driver = "Sql Server",Server = "inp2300irmadb01\\ntwk", Database = "AKRO")
+DeliverablesSchedule = dbGetQuery(AKROConnection,"SELECT Identifier, Deliverable, Description FROM vwDeliverablesSchedule2 WHERE (ProtocolID = 35) ORDER BY Identifier")
+
+# Loons database connection
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Loons")
+Sql = paste0("SELECT Year, Park, Plot, Lake, Date, Species, ScientificName, CommonName, Loons, Nests, Pairs, Chicks, Eggs, 
+Location, Activity, IsIncidentalObservation, IsNest, IsPair, SurveyType, LakeType, Latitude, 
+ Longitude, Notes, ObservationID
+FROM Dataset_SurveyData
+WHERE        (Year = ",SurveyYear,")
+ORDER BY Year, Park, Plot, Lake, Date")
+data = dbGetQuery(Connection,Sql)
+
+```
+# Data Release Report:  `r SurveyYear` Yellow-billed Loon Survey in Cape Krusenstern National Monument and Bering Land Bridge National Preserve, Alaska
+
+Scott D. Miller\
+Information Technology Specialist/Data Manager\
+United States Department of the Interior\
+240 W. 5th Ave\
+Anchorage, AK 99501
+
+`r format(Sys.Date(), "%B %d, %Y")`
+
+# Abstract
+
+```{r,echo=FALSE}
+
+ResultsSummary = 
+  data %>%
+    filter(IsIncidentalObservation != 1) %>% 
+    group_by(CommonName) %>% 
+    summarize(
+        Start=min(as.Date(Date),na.rm=TRUE),
+        End=max(as.Date(Date),na.rm=TRUE),
+        `Survey days`=n_distinct(as.Date(Date)),
+        Count = sum(Loons,na.rm = TRUE),
+        Pairs=sum(IsPair,na.rm=TRUE),
+        Nests=sum(IsNest,na.rm=TRUE),
+        # Chicks=sum(Chicks,na.rm=TRUE), # No chicks recorded anywhere
+        Eggs = sum(Eggs,na.rm=TRUE),
+        Observations=n()
+    ) 
+
+# Get the survey start and end dates to use in the abstract below
+StartDate = min(data$Date,na.rm=TRUE)
+EndDate = max(data$Date,na.rm=TRUE)
+
+# Make a summary of just YBLO data to use in the abstract below
+YBLOResultsSummary = ResultsSummary %>% filter(CommonName=='Yellow-billed Loon')
+
+# Get the number of loon species observed
+NumLoonSpecies = data %>% filter(Species != 'UNLO') %>% summarize(LoonSpecies=n_distinct(Species)) %>% pull(LoonSpecies)
+
+# The abstract requires a count of YBLO observations in capitalized written number format 
+YBLONumberOfObservations = as.character(english(YBLOResultsSummary$Observations))
+YBLONumberOfObservations = paste0(toupper(substr(YBLONumberOfObservations, 1, 1)), substr(YBLONumberOfObservations, 2, nchar(YBLONumberOfObservations)))
+
+# Generate the abstract
+Abstract = paste0("The National Park Service conducted an aerial survey of Yellow-billed Loons in Cape Krusenstern National Monument and Bering 
+Land Bridge National Preserve, Alaska from ",format(as.Date(StartDate), "%B %d, %Y")," to ",format(as.Date(EndDate), "%B %d, %Y"),". 
+Park biologists surveyed for ",data %>% summarize(Days = n_distinct(as.Date(Date))) %>% pull(Days)," days, 
+making ",sum(ResultsSummary$Observations)," observations of ",NumLoonSpecies,"  loon species. ",YBLONumberOfObservations," observations 
+were made of Yellow-billed loons, the primary species of interest, including ",YBLOResultsSummary$Pairs,  " pairs, ",YBLOResultsSummary$Nests," nests and ",YBLOResultsSummary$Eggs," eggs. 
+This Data Release Report describes the survey dataset and deliverables for this survey.")
+
+```
+
+`r Abstract`
+
+# Dataset Sensitivity Statement
+
+**[SENSITIVE DATASET]** NPS internal use only.
+
+The resource described in this report has been designated as a species
+of concern and is legally protected. The rules for dissemination for
+Yellow-billed loons specifically state (Koelsch, 2019):
+
+*"Legally Protected Under National Parks Omnibus Management Act, Section
+207, of 16 U.S.C. § 5937; Specific location (geographic coordinates) of
+this species of concern will not be released to the general public due
+to their global rarity and nest site fidelity. Any such data collected
+will be redacted from the publicly released datasets. This protects
+collaborating agencies data as well; but does not preclude sharing
+between collaborating agencies. Processed data with coordinates redacted
+(such as summaries, processed maps, or products) remain publicly
+available. This will be done indefinitely."*
+
+# Access
+
+Loon monitoring reports, data and other digital products are available NPS
+Data Store at the following URL:
+<https://irma.nps.gov/DataStore/Reference/Profile/2216938>.
+
+# License
+
+U.S. Government Works Data and content created by government employees
+within the scope of their employment are not subject to domestic
+copyright protection under 17 U.S.C. § 105. Government works not
+specifically designated for withholding by law are, by default, in the
+U.S. Public Domain.
+
+# Deliverables
+
+Data deliverables (Table 1) for this monitoring program are defined in the loons monitoring protocol (Flamme, et al., 2018). 
+
+```{r,include=FALSE}
+# Build a query
+Sql = "SELECT Identifier
+, Deliverable
+, [Format]
+, Schedule
+, Responsibility
+, Convert(Varchar(2000),[Description]) as [Description]
+, Convert(Varchar(2000),Specifications) as Specifications
+, Convert(Varchar(2000),FileNamingScheme) as FileNamingScheme
+, Convert(Varchar(2000),DataHandling) as DataHandling
+, Convert(Varchar(2000),QAQC) as QC
+, Convert(Varchar(2000),Archival) as Archival
+, Convert(Varchar(2000),BuilderTasks) as BuilderTasks
+, Convert(Varchar(2000),ValidatorTasks) as ValidatorTasks
+, Convert(Varchar(2000),CertifierTasks) as CertifierTasks
+, [Version], ProtocolID
+, SOP, SOPVersion,DeliverableID, VSID, NetworkID
+FROM vwDeliverablesSchedule2
+WHERE (ProtocolID = 35) 
+ORDER BY Identifier"
+
+# Execute the query
+deliverables = dbGetQuery(AKROConnection,Sql)
+
+```
+
+Table 1. Deliverables schedule for the loons monitoring program.
+
+```{r,echo=FALSE}
+knitr::kable(deliverables %>% select(Identifier,Deliverable))
+
+```
+
+```{r,echo=FALSE,results='asis'}
+for(i in 1:nrow(deliverables)){
+  Identifier = deliverables[i,'Identifier']  
+  Deliverable = deliverables[i,'Deliverable']  
+  Format = deliverables[i,'Format']  
+  Schedule = deliverables[i,'Schedule']  
+  Responsibility = deliverables[i,'Responsibility']  
+  Description = deliverables[i,'Description']  
+  Specifications = deliverables[i,'Specifications']  
+  FileNamingScheme = deliverables[i,'FileNamingScheme']  
+  deliverablesHandling = deliverables[i,'deliverablesHandling']  
+  QC = deliverables[i,'QC']  
+  Archival = deliverables[i,'Archival']  
+  BuilderTasks = deliverables[i,'BuilderTasks']  
+  ValidatorTasks = deliverables[i,'ValidatorTasks']  
+  CertifierTasks = deliverables[i,'CertifierTasks']  
+  Version = deliverables[i,'Version']  
+  ProtocolID = deliverables[i,'ProtocolID']  
+  SOP = deliverables[i,'SOP']  
+  SOPVersion = deliverables[i,'SOPVersion']  
+  DeliverableID = deliverables[i,'DeliverableID']  
+  VSID = deliverables[i,'VSID']  
+  NetworkID = deliverables[i,'NetworkID']
+
+  cat("# ",Identifier,": ",Deliverable,"  \n\n",sep="")
+  cat("*Format:* ",Format,"  \n\n",sep="")  
+  cat("*Schedule:* ",Schedule,"  \n\n",sep="")  
+  cat("*Responsibility:* ",Responsibility,"  \n\n",sep="")  
+  cat("*Description:* ",Description,"  \n\n",sep="")  
+  cat("*Specifications:* ",Specifications,"  \n\n",sep="")  
+  cat("*FileNamingScheme:* ",FileNamingScheme,"  \n\n",sep="")  
+  # cat("*DataHandling:* ",DataHandling,"  \n\n",sep="")  
+  # cat("*QC:* ",QC,"  \n\n",sep="")  
+  # cat("*Archival:* ",Archival,"  \n\n",sep="")  
+  # cat("*BuilderTasks:* ",BuilderTasks,"  \n\n",sep="")  
+  # cat("*ValidatorTasks:* ",ValidatorTasks,"  \n\n",sep="")  
+  # cat("*CertifierTasks:* ",CertifierTasks,"  \n\n",sep="")  
+  # cat("*Version:* ",Version,"  \n\n",sep="")  
+  # cat("*ProtocolID:* ",ProtocolID,"  \n\n",sep="")  
+  # cat("*SOP:* ",SOP,"  \n\n",sep="")  
+  # cat("*SOPVersion:* ",SOPVersion,"  \n\n",sep="")  
+  # cat("*DeliverableID:* ",DeliverableID,"  \n\n",sep="")  
+  # cat("*VSID:* ",VSID,"  \n\n",sep="")  
+  # cat("*NetworkID:* ",NetworkID,"  \n\n",sep="") 
+  cat("  \n\n")
+}
+
+# for(Col in colnames(deliverables)){
+#   # cat(Col," = deliverables[i,'",Col,"']  \n",sep="")
+#   cat("cat(\"*",Col,":* \",",Col,",\"  \\n\\n\",sep=\"\")  \n",sep="")
+# }
+
+```
+
+
+
+# Files
+
+Table 2. Files included in this dataset.
+
+```{r,echo=FALSE}
+
+# List all files in the directory (non-recursive)
+files <- list.files(path = dir, full.names = TRUE)
+
+# Obtain file info including last modification time
+file_info <- file.info(files)
+
+# Build a data frame with filenames and timestamps
+result_df <- data.frame(
+  Filename = basename(files)                  # Extract just the filenames, without path
+  #Description = ''                 # Last modification time
+)
+
+# Print the resulting data frame
+knitr::kable(result_df %>% filter(str_sub(Filename, 1, 2) == "YB") %>% arrange(Filename))
+
+TableCounter = TableCounter + 1
+
+```
+
+# Data Quality Evaluation
+
+The data within the data records listed above have been reviewed by
+staff in the NPS Inventory and Monitoring Division to ensure accuracy,
+completeness, and consistency with documented data quality standards, as
+well as for usability and reproducibility. This dataset is suitable for
+its intended use as of the date of processing
+(`r format(Sys.Date(), "%B %d, %Y")`).
+
+# Study Area
+
+The `r SurveyYear` Yellow-billed loon survey took place in coastal northwestern
+Alaska in Cape Krusenstern National Monument and Bering Land Bridge
+National Preserve (Figure 1).
+
+```{r, echo=FALSE,message=FALSE,error=FALSE,results='hide'}
+library(sf)
+# Get the Plots spatial polygons from the database
+# Spatial layers, Parks and Alaska
+# Parks = st_read('https://irma.nps.gov/DataStore/DownloadFile/704836')
+#AK = st_read('https://irma.nps.gov/DataStore/DownloadFile/746052')
+GISPath = r'(C:\Work\GIS Common Layers\GCS\)'
+Parks = st_read(paste0(GISPath,'AKParks_reprojected.shp'))
+AK = st_read(paste0(GISPath,'AK_GCS.shp'))
+
+# Get the Plots spatial polygons from the database
+Plots <- st_read(
+  Connection,
+  query = "
+    SELECT 
+      Year, Plot, Park, PlotType, 
+      PlotFeature.STAsBinary() AS geom
+    FROM Plots
+    WHERE Year = 2025
+    ORDER BY Plot",
+  geometry_column = "geom",crs = 4326
+)
+```
+
+```{r, echo=FALSE}
+# Get bounding box of the Plots layer
+bbox <- st_bbox(Plots)
+buffer = 0.1
+
+# Map it
+ggplot() +
+  geom_sf(data = AK, fill = "white", color = "gray80", alpha = 0.5) +
+  #geom_sf(data = Parks, fill = "palegreen4", color = NA, alpha = 0.2) +
+  geom_sf(data = Plots, fill = NA, color = "gray40", alpha = 0.3) +
+  coord_sf(
+    xlim = c(bbox["xmin"] - buffer, bbox["xmax"] + buffer),
+    ylim = c(bbox["ymin"] - buffer, bbox["ymax"] + buffer),
+    expand = FALSE
+  ) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightsteelblue1"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(title = paste0(SurveyYear," Loon Survey Study Area"))
+
+FigureCounter = FigureCounter + 1
+```
+
+Figure 1. Map of the `r SurveyYear` aerial loon survey area showing Cape Krusenstern National Monument (coastal park in green, north) and Bering Land Bridge National Preserve, in green, south) with standard 12x12km monitoring plots as black squares.
+
+# Methods
+
+See Flamme, et al. (2018) for methods.
+
+# Summary of Results
+
+Observations were made of five loon species, but the focus of the
+results in this section is on Yellow-billed loons, the subject of NPS'
+monitoring protocol. Observation and nest locations are shown in Figure
+2 and Table `r TableCounter`. NPS recorded 65 loon
+observations including 35 breeding pairs, 15 nests and 4 eggs.
+
+## Map
+
+Figure 2 shows spatial results of the `r SurveyYear` Yellow-billed
+loon survey. Only Yellow-billed loon observations are shown. Observations are shown as black points. Nest locations are
+represented by red points. Plot boundaries are shown as gray 12 x 12
+km\^2 squares.
+
+```{r, echo=FALSE}
+
+# Get bounding box of the Plots layer
+bbox <- st_bbox(Plots)
+buffer = 0.1
+ggplot() +
+  geom_sf(data = AK, fill = "white", color = "gray80", alpha = 0.5) +
+  geom_sf(data = Parks, fill = "palegreen4", color = NA, alpha = 0.2) +
+  geom_sf(data = Plots, fill = NA, color = "gray40", alpha = 0.3) +
+  coord_sf(
+    xlim = c(bbox["xmin"] - buffer, bbox["xmax"] + buffer),
+    ylim = c(bbox["ymin"] - buffer, bbox["ymax"] + buffer),
+    expand = FALSE
+  ) +
+  
+  # Observations
+    geom_point(data=data %>% filter(Species == 'YBLO' & IsNest != 1 & Latitude > 0 & !is.na(Latitude)),aes(x=Longitude,y=Latitude),size=1) +
+  
+  # Nests
+  geom_point(data=data %>% filter(Species == 'YBLO' & IsNest == 1 & Latitude > 0 & !is.na(Latitude)),aes(x=Longitude,y=Latitude),size=1,color='red') +
+  
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightsteelblue1"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(title = paste0(SurveyYear," Loon Survey Observations"))
+
+FigureCounter = FigureCounter + 1
+
+```
+
+Figure 2. Loon and nest observations from the `r SurveyYear` Yellow-billed Loon survey. Only Yellow-billed loon observations are shown. Loon observations are shown as black points. Nest locations are represented by red points. Plot boundaries are shown as gray 12 x 12 km^2 squares.
+
+## Observations Summary
+
+A summary of results for the `r SurveyYear` Yellow-billed loon survey appears in
+Table `r TableCounter`.
+
+```{r,echo=FALSE}
+knitr::kable(ResultsSummary %>% adorn_totals)
+# glimpse(data)
+
+TableCounter = TableCounter + 1
+```
+
+# Quality Control Summary
+
+## Missing Spatial Information
+
+Any records returned by this quality control check should be viewed as errors as spatial coordinates are needed to assign loon observations to specific lakes and plots.
+
+```{r,echo=FALSE,results='asis'}
+sql = paste0("SELECT Year, CountOfRecordsMissingSpatial
+FROM QC_SurveyData_MissingSpatial WHERE [Year] = ",SurveyYear)
+cat(sql,"  \n")
+qc = dbGetQuery(Connection,sql)
+if(nrow(qc) == 0){
+  cat("  \n")
+  cat('PASSED: Zero records.')  
+  cat("  \n")
+}else{
+  cat("  \n")
+  cat('FAILED:',nrow(qc)," records.")
+  cat("  \n")
+  knitr::kable(qc)
+}
+```
+
+## Missing Plot Designation
+
+Any records returned by this quality control check should be viewed as warnings to be investigated. Occasionally observations are made near the edges of plots. Such records may not be assigned a 
+Plot by the database spatial join with the Plot polygons.
+
+```{r,echo=FALSE,results='asis'}
+sql = paste0("SELECT Count(*) as RecordCount FROM SurveyData WHERE Year = ",SurveyYear, " And Plot Is NULL")
+cat(sql,"  \n")
+qc = dbGetQuery(Connection,sql)
+if(nrow(qc) == 0){
+  cat("  \n")
+  cat('PASSED: Zero records.')  
+  cat("  \n")
+}else{
+  cat("  \n")
+  cat("WARNING: Multiple records.")
+  print(knitr::kable(qc))
+  cat("  \n")
+}
+```
+
+## Plot Cannot Be Assigned By Spatial Join
+
+
+```{r,echo=FALSE,results='asis'}
+sql = paste0("SELECT Year,Plot,Latitude,Longitude FROM QC_SurveyData_PlotCannotBeDeterminedBySpatialJoin WHERE Year = ",SurveyYear)
+cat(sql,"  \n")
+qc = dbGetQuery(Connection,sql)
+if(nrow(qc) == 0){
+  cat("  \n")
+  cat('PASSED: Zero records.')  
+  cat("  \n")
+}else{
+  cat("  \n")
+  cat("ERROR: ",qc %>% summarize(n=n()) %>% pull(n)," records.")
+  #print(knitr::kable())
+  
+  map = # Get bounding box of the Plots layer
+    # bbox <- st_bbox(Plots)
+    # buffer = 0.1
+    ggplot() +
+      geom_sf(data = AK, fill = "white", color = "gray80", alpha = 0.5) +
+      geom_sf(data = Parks, fill = "palegreen4", color = NA, alpha = 0.2) +
+      geom_sf(data = Plots, fill = NA, color = "gray40", alpha = 0.3) +
+      coord_sf(
+        xlim = c(bbox["xmin"] - buffer, bbox["xmax"] + buffer),
+        ylim = c(bbox["ymin"] - buffer, bbox["ymax"] + buffer),
+        expand = FALSE
+      ) +
+      
+      # Observations
+      geom_point(data=qc,aes(x=Longitude,y=Latitude),size=1) +
+      
+      theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "lightsteelblue1"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+      ) +
+      labs(title = paste0(SurveyYear," Loon Survey Observations"))
+print(map)
+    
+  
+  cat("  \n")
+}
+```
+
+## Missing Lake Designation
+
+Any records returned by this quality control check should be viewed as warnings to be investigated. Observations are routinely made at the margins of lakes. 
+Lake boundaries data may not exactly match the lakes data layer.
+Such records may not be assigned a Lake identifier by the database by a spatial join with lake data layers. Or, no lake identifiers were attempted because lake spatial datasets 
+are continually changing and the project leader did not assign them because they are intended to be assigned at the time of analysis.
+
+```{r,echo=FALSE,results='asis'}
+sql = paste0("SELECT Count(*) as RecordCount FROM SurveyData WHERE Year = ",SurveyYear, " And Lake Is NULL")
+cat(sql,"  \n")
+qc = dbGetQuery(Connection,sql)
+if(nrow(qc) == 0){
+  cat("  \n")
+  cat('PASSED: Zero records.')  
+  cat("  \n")
+}else{
+  cat("  \n")
+  cat("WARNING: Multiple records.")
+  print(knitr::kable(qc))
+  cat("  \n")
+}
+```
+
+## Records Missing Information
+
+Any records returned by this quality control check should be viewed as warnings to be investigated. 
+It may be that the observer located and recorded a species but omitted a count. Most likely observers spotted a single loon, assigned a species but omitted a count.
+
+```{r,echo=FALSE,results='asis'}
+sql = paste0("
+SELECT Year, Plot, Lake, Date, Species, Count, IsNest, IsPair, Eggs, Chicks
+FROM QC_SurveyData_NoCountNoNestNoPairNoEggNoChick
+WHERE Year = ",SurveyYear, "ORDER BY Year, Plot, Lake, Date, Species")
+cat(sql,"  \n")
+qc = dbGetQuery(Connection,sql)
+if(nrow(qc) == 0){
+  cat("  \n")
+  cat('PASSED: Zero records.')  
+  cat("  \n")
+}else{
+  cat("  \n")
+  cat("WARNING: Multiple records.")
+  print(knitr::kable(qc))
+  cat("  \n")
+}
+```
+
+## Pairs May Not Match Counts
+
+Any records returned by this quality control check should be viewed as warnings to be investigated. The number of loon pairs observed should match the total count of loons observed times two.
+
+```{r,echo=FALSE,results='asis'}
+sql = paste0("
+SELECT        Year, Plot, Lake, ObservationDateTime, Species, Count, Pairs
+FROM            QC_SurveyData_CountMayNotMatchPairs
+WHERE Year = ",SurveyYear, "ORDER BY Year, Plot, Lake, ObservationDateTime")
+cat(sql,"  \n")
+qc = dbGetQuery(Connection,sql)
+if(nrow(qc) == 0){
+  cat("  \n")
+  cat('PASSED: Zero records.')  
+  cat("  \n")
+}else{
+  cat("  \n")
+  cat("WARNING: Multiple records.")
+  print(knitr::kable(qc))
+  cat("  \n")
+}
+```
+
+# References
+
+Flamme, M.J., J.H. Schmidt, J. Mizel and Miller, S.D. 2018.
+Yellow-billed loon monitoring protocol for the Arctic Network: Protocol
+narrative version 1.0. Natural Resource Report. NPS/ARCN/NRR—2018/1738.
+National Park Service. Fort Collins, Colorado
+<https://irma.nps.gov/DataStore/Reference/Profile/2256435>
+
+Koelsch J. 2019. To: Wald EJ. Re: Handling of Protected Natural Resource
+Data - BELA <https://irma.nps.gov/DataStore/Reference/Profile/2263477>
+
+```{r,include= FALSE}
+# Copy the report to the loon directory
+dst <- paste0(dir,"/",SurveyYear," ARCN Loons Dataset Release Report.pdf")
+dst2 <- paste0(getwd(),"/",SurveyYear," ARCN Loons Dataset Release Report.pdf")
+src =  "ARCN Loons Dataset Release Report.pdf"
+dst
+file.exists(src)
+if (file.exists(src)) {
+  file.copy(src, dst, overwrite = TRUE)
+  file.copy(src, dst2, overwrite = TRUE)
+}
+
+```
+

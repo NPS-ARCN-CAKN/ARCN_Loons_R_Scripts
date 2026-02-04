@@ -1,0 +1,330 @@
+---
+title: ""
+output:
+  pdf_document:
+    toc: false          
+    # number_sections: true  # Number sections
+    # fig_caption: true     # Enable figure captions
+    # latex_engine: xelatex # Use xelatex engine (optional)
+  html_document:
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup,echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Setup
+options(knitr.kable.NA = '')
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(tidyverse)
+library(janitor)
+library(odbc)
+library(leaflet)
+
+Year = 2018
+
+dir = paste0(r'(C:\Work\VitalSigns\ARCN Western Yellow-billed Loons\Data\)',Year)
+
+# Use the below for sequentially numbering tables and figures
+QCCheckCounter = 1
+TableCounter = 1
+FigureCounter = 0 # I don't know why starting at 1 doesn't work
+
+# Project management database connection
+AKROConnection = dbConnect(odbc(),Driver = "Sql Server",Server = "inp2300irmadb01\\ntwk", Database = "AKRO")
+DeliverablesSchedule = dbGetQuery(AKROConnection,"SELECT Identifier, Deliverable, Description FROM vwDeliverablesSchedule2 WHERE (ProtocolID = 35) ORDER BY Identifier")
+
+# Loons database connection
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Loons")
+data = dbGetQuery(Connection,paste0("SELECT Year, Park, Plot, Lake, Date, Species, ScientificName, CommonName, Loons, Nests, Pairs, Chicks, Eggs, Location, Activity, IsIncidentalObservation, IsNest, IsPair, SurveyType, LakeType, ObservationDateTime, Latitude, 
+ Longitude, Notes, ObservationID
+FROM Dataset_SurveyData
+WHERE        (Year = ",Year,")
+ORDER BY Year, Park, Plot, Lake, ObservationDateTime"))
+
+```
+
+# Data Release Report: `r Year` Yellow-billed Loon Survey in Cape Krusenstern National Monument and Bering Land Bridge National Preserve, Alaska
+
+Scott D. Miller\
+Information Technology Specialist/Data Manager\
+United States Department of the Interior\
+240 W. 5th Ave\
+Anchorage, AK 99501
+
+`r format(Sys.Date(), "%B %d, %Y")`
+
+# Abstract
+
+```{r,echo=FALSE}
+
+ResultsSummary = 
+  data %>%
+    filter(IsIncidentalObservation != 1) %>% 
+    group_by(CommonName) %>% 
+    summarize(
+        Start=min(as.Date(Date),na.rm=TRUE),
+        End=max(as.Date(Date),na.rm=TRUE),
+        `Survey days`=n_distinct(as.Date(Date)),
+        Pairs=sum(IsPair,na.rm=TRUE),
+        Nests=sum(IsNest,na.rm=TRUE),
+        # Chicks=sum(Chicks,na.rm=TRUE), # No chicks recorded anywhere
+        Eggs = sum(Eggs,na.rm=TRUE),
+        Observations=n()
+    ) 
+
+StartDate = min(data$Date,na.rm=TRUE)
+EndDate = max(data$Date,na.rm=TRUE)
+
+Abstract = paste0("The National Park Service conducted an aerial survey of Yellow-billed Loons in Cape Krusenstern National Monument and Bering Land Bridge National Preserve, Alaska from ",StartDate," to ",EndDate,". Park biologists surveyed for ",data %>% summarize(n_distinct(Date))," days, making 426 observations of five loon species. Sixty-five observations were made of Yellow-billed loons, including 34 pairs, 15 nests and 4 eggs. This Data Release Report describes the survey dataset and deliverables for this survey.")
+
+
+```
+
+`r Abstract`
+
+# Dataset Sensitivity Statement
+
+**[SENSITIVE DATASET]** NPS internal use only.
+
+The resource described in this report has been designated as a species
+of concern and is legally protected. The rules for dissemination for
+Yellow-billed loons specifically state (Koelsch, 2019):
+
+*"Legally Protected Under National Parks Omnibus Management Act, Section
+207, of 16 U.S.C. § 5937; Specific location (geographic coordinates) of
+this species of concern will not be released to the general public due
+to their global rarity and nest site fidelity. Any such data collected
+will be redacted from the publicly released datasets. This protects
+collaborating agencies data as well; but does not preclude sharing
+between collaborating agencies. Processed data with coordinates redacted
+(such as summaries, processed maps, or products) remain publicly
+available. This will be done indefinitely."*
+
+# Access
+
+The data release associated with this report is available from the NPS
+Data Store at the following URL:
+<https://irma.nps.gov/DataStore/Reference/Profile/2316054>.
+
+# License
+
+U.S. Government Works Data and content created by government employees
+within the scope of their employment are not subject to domestic
+copyright protection under 17 U.S.C. § 105. Government works not
+specifically designated for withholding by law are, by default, in the
+U.S. Public Domain.
+
+# Deliverables
+
+Data deliverables (Table 1) For this monitoring program are defined In Flamme
+M.J., J.H. Schmidt, J. Mizel and S.D. Miller. 2018. Yellow-billed loon
+monitoring protocol for the Arctic Network: Protocol narrative version
+1.0. Natural Resource Report. NPS/ARCN/NRR—2018/1738. National Park
+Service. Fort Collins, Colorado, Version 1.00, IRMA reference code
+2256435. This protocol Is available through the National Park Service's
+Integrated Resource Management Applications Data Store.
+
+```{r,echo=FALSE,tab.cap=paste0("Table ",TableCounter,". Loon monitoring deliverables schedule")}
+knitr::kable(DeliverablesSchedule)
+TableCounter = TableCounter + 1
+```
+
+# Files
+
+Table 2 lists the files included in this data release.
+
+```{r,echo=FALSE,tab.cap=paste0("Table ",TableCounter,". Files included in this dataset.")}
+
+# List all files in the directory (non-recursive)
+files <- list.files(path = dir, full.names = TRUE)
+
+# Obtain file info including last modification time
+file_info <- file.info(files)
+
+# Build a data frame with filenames and timestamps
+result_df <- data.frame(
+  Filename = basename(files)                  # Extract just the filenames, without path
+  #Description = ''                 # Last modification time
+)
+
+# Print the resulting data frame
+knitr::kable(result_df %>% filter(Filename != 'Misc') %>% arrange(Filename))
+
+TableCounter = TableCounter + 1
+
+```
+
+# Data Quality Evaluation
+
+The data within the data records listed above have been reviewed by
+staff in the NPS Inventory and Monitoring Division to ensure accuracy,
+completeness, and consistency with documented data quality standards, as
+well as for usability and reproducibility. This dataset is suitable for
+its intended use as of the date of processing
+(`r format(Sys.Date(), "%B %d, %Y")`).
+
+The 2023 Yellow-billed loon dataset does not include a number of
+deliverables that were not available at the time of publication. Missing
+deliverables include:
+
+-   YB01 (survey geodatabase). This deliverable is optional as all
+    pertinent data are included in YB02 (Park Observer files).
+
+-   YB03 (waypoints). This deliverable is optional, if waypoints were
+    collected.
+
+-   YB04 (data collection forms, boolets and related materials). These
+    items were not available.
+
+-   YB05 (certified database snapshot) is not included because the
+    monitoring database has not been completed.
+
+-   YB08 (Lake spatial polygons) are not included with this dataset.
+
+-   YB09 (Plot spatial polygons) are not included with this dataset.
+
+-   YB11 (data collection forms, booklets and related materials). These
+    items were not available.
+
+The loon monitoring protocol specifies 24 standard loon plots for
+observations. The current dataset does not specify to which plot each
+observation was recorded. These plot associations can be recovered
+through a spatial join.
+
+Three records have no species attribute.
+
+# Study Area
+
+The 2023 Yellow-billed loon survey took place in coastal northwestern
+Alaska in Cape Krusenstern National Monument and Bering Land Bridge
+National Preserve (Figure 1).
+
+```{r, echo=FALSE,message=FALSE,error=FALSE,results='hide'}
+library(sf)
+PlotsFile = paste0(r'(O:\Monitoring\Vital Signs\Yellow-billed Loons\Data\2009\YB09 2009 YBLO Survey Plots.json)')
+Plots <- st_read(PlotsFile)
+Plots$Plot = Plots$PLTS0783_I
+
+Parks = st_read(r'(C:\Work\GIS Common Layers\AK_Parks.geojson)')
+AK = st_read(r'(C:\Work\GIS Common Layers\Alaska.json)')
+
+```
+
+```{r, echo=FALSE,fig.cap=paste0("Figure ",FigureCounter,". Map of the 2023 aerial loon survey area showing Cape Krusenstern National Monument (coastal park in green, north) and Bering Land Bridge National Preserve, in green, south) with standard 12x12km monitoring plots as black squares.")}
+
+# Get bounding box of the Plots layer
+bbox <- st_bbox(Plots)
+buffer = 0.1
+ggplot() +
+  geom_sf(data = AK, fill = "white", color = "gray80", alpha = 0.5) +
+  geom_sf(data = Parks, fill = "palegreen4", color = NA, alpha = 0.2) +
+  geom_sf(data = Plots, fill = NA, color = "gray40", alpha = 0.3) +
+  coord_sf(
+    xlim = c(bbox["xmin"] - buffer, bbox["xmax"] + buffer),
+    ylim = c(bbox["ymin"] - buffer, bbox["ymax"] + buffer),
+    expand = FALSE
+  ) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightsteelblue1"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(title = "2023 Loon Survey Study Area")
+
+FigureCounter = FigureCounter + 1
+```
+
+# Methods
+
+See Flamme, et al. (2018) for methods.
+
+# Summary of Results
+
+Observations were made of five loon species, but the focus of the
+results in this section is on Yellow-billed loons, the subject of NPS'
+monitoring protocol. Observation and nest locations are shown in Figure
+2 and Table `r TableCounter`. NPS recorded 65 loon
+observations including 35 breeding pairs, 15 nests and 4 eggs.
+
+## Map
+
+Figure 2 shows spatial results of the 2023 Yellow-billed
+loon survey. Observations are shown as black points. Nest locations are
+represented by red points. Plot boundaries are shown as gray 12 x 12
+km\^2 squares.
+
+```{r, echo=FALSE,fig.cap=paste0("Figure ",FigureCounter,". Loon and nest observations from the 2009 Yellow-billed Loon survey. Loon observations are shown as black points. Nest locations are represented by red points. Plot boundaries are shown as gray 12 x 12 km^2 squares.")}
+
+# Get bounding box of the Plots layer
+bbox <- st_bbox(Plots)
+buffer = 0.1
+ggplot() +
+  geom_sf(data = AK, fill = "white", color = "gray80", alpha = 0.5) +
+  geom_sf(data = Parks, fill = "palegreen4", color = NA, alpha = 0.2) +
+  geom_sf(data = Plots, fill = NA, color = "gray40", alpha = 0.3) +
+  coord_sf(
+    xlim = c(bbox["xmin"] - buffer, bbox["xmax"] + buffer),
+    ylim = c(bbox["ymin"] - buffer, bbox["ymax"] + buffer),
+    expand = FALSE
+  ) +
+  
+  # Observations
+    geom_point(data=data %>% filter(Species == 'YBLO' & IsNest != 1 & Latitude > 0 & !is.na(Latitude)),aes(x=Longitude,y=Latitude),size=1) +
+  
+  # Nests
+  geom_point(data=data %>% filter(Species == 'YBLO' & IsNest == 1 & Latitude > 0 & !is.na(Latitude)),aes(x=Longitude,y=Latitude),size=1,color='red') +
+  
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightsteelblue1"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(title = "2023 Loon Survey Observations")
+
+FigureCounter = FigureCounter + 1
+
+```
+
+## Observations Summary
+
+A summary of results for the 2023 Yellow-billed loon survey appears in
+Table `r TableCounter`.
+
+```{r,echo=FALSE,tab.cap=paste0("Table ",TableCounter,". Loon observations summary.")}
+
+
+kable(ResultsSummary %>% adorn_totals)
+# glimpse(data)
+
+TableCounter = TableCounter + 1
+```
+
+Loon species codes:
+
+| Code    | Species              |
+|---------|----------------------|
+| (Blank) | Species not recorded |
+| ARLO    | Arctic loon          |
+| COLO    | Common loon          |
+| PALO    | Pacific loon         |
+| RTLO    | Red-throated loon    |
+| YBLO    | Yellow-billed loon   |
+| UNLO    | Unidentified loon    |
+
+# References
+
+Flamme, M.J., J.H. Schmidt, J. Mizel and Miller, S.D. 2018.
+Yellow-billed loon monitoring protocol for the Arctic Network: Protocol
+narrative version 1.0. Natural Resource Report. NPS/ARCN/NRR—2018/1738.
+National Park Service. Fort Collins, Colorado
+<https://irma.nps.gov/DataStore/Reference/Profile/2256435>
+
+Koelsch J. 2019. To: Wald EJ. Re: Handling of Protected Natural Resource
+Data - BELA <https://irma.nps.gov/DataStore/Reference/Profile/2263477>

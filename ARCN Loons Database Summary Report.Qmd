@@ -1,0 +1,197 @@
+---
+title: ""
+format:
+  typst:
+    toc: false
+    number-sections: false
+    columns: 1
+---
+
+Scott D. Miller\
+Information Technology Specialist/Data Manager\
+United States Department of the Interior 240 W. 5th Ave\
+Anchorage, AK 99501
+
+
+```{r setup, include=FALSE, echo=FALSE}
+
+# Set up report parameters here
+SurveyYear = 2016  # Set this to the desired report year. 
+
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) # Prevent overwhelming messages from reaching user
+
+options(download.file.method = "wininet")
+# Make kable show blanks for NAs
+options(knitr.kable.NA = '')
+
+# Load libraries
+library(odbc)
+library(ggplot2)
+library(tidyverse)
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+library(janitor)
+library(tinytex)
+
+```
+
+```{r echo=FALSE,label="SET UP REPORT PARAMETERS HERE"}
+
+# ODBC connection to the  monitoring SQL Server Database. 
+# Contact data manager for server and database details.
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Loons")
+
+# Project tracking database connection
+AKROConnection = dbConnect(odbc(),Driver = "Sql Server",Server = "inp2300irmadb01\\ntwk", Database = "AKRO")
+
+```
+
+```{r echo=FALSE,label="Functions"}
+
+# Current date
+CurrentDate = format(Sys.Date(), format='%B %d, %Y') # Get the current date
+
+# Function to convert a date string to a long date
+GetLongDate <- function(Date) {
+  return(format(as.Date(Date), format="%B %d, %Y"))
+}
+
+# These counters are used to number the tables and figures. Each gets incremented after use.
+TableCounter = 1
+FigureCounter = 1
+
+```
+
+# Administrative
+
+[Project Reference in Data Store](O:\Monitoring\Vital Signs\Yellow-billed Loons)
+
+Network workbench: O:\Monitoring\Vital Signs\Yellow-billed Loons
+
+# Deliverables Schedule
+
+```{r, echo=FALSE}
+Sql = "SELECT Identifier, Deliverable, SOP, SOPVersion, [Format], Schedule, Responsibility
+, Convert(Varchar(1000),Description) As Description
+, Convert(Varchar(1000),Specifications) As Specifications
+, Convert(Varchar(1000),FileNamingScheme) As FileNamingScheme
+, Convert(Varchar(1000),DataHandling) As DataHandling
+, Convert(Varchar(1000),QAQC) As QAQC
+, Convert(Varchar(1000),Archival) As Archival
+, Convert(Varchar(1000),BuilderTasks) As BuilderTasks
+, Convert(Varchar(1000),ValidatorTasks) As ValidatorTasks
+, Convert(Varchar(1000),CertifierTasks) As CertifierTasks
+, Version, ProtocolCitation,[Version], VSID,ProtocolID,DeliverableID
+FROM vwDeliverablesSchedule2
+WHERE (ProtocolID=35)"
+DeliverablesSchedule = dbGetQuery(AKROConnection,Sql)
+
+```
+
+
+```{r, echo=FALSE,tab.cap=paste0("Table ",TableCounter,". Deliverables schedule")}
+
+knitr::kable(DeliverablesSchedule %>% select(Identifier,Deliverable,Schedule,Responsibility))
+
+```
+
+
+
+```{r echo=FALSE,results='asis'}
+for(i in 1:nrow(DeliverablesSchedule)){
+  ID = DeliverablesSchedule$DeliverableID[i]
+  Deliverable = dbGetQuery(AKROConnection,paste0("SELECT Identifier + ': ' + Deliverable as Deliverable
+ , [Format], Schedule, Responsibility
+  , Convert(Varchar(1000),Description) As Description
+  , Convert(Varchar(1000),Specifications) As Specifications
+  , Convert(Varchar(1000),FileNamingScheme) As FileNamingScheme
+  , Convert(Varchar(1000),DataHandling) As DataHandling
+  , Convert(Varchar(1000),QAQC) As QAQC
+  , Convert(Varchar(1000),Archival) As Archival
+  , Convert(Varchar(1000),BuilderTasks) As BuilderTasks
+  , Convert(Varchar(1000),ValidatorTasks) As ValidatorTasks
+  , Convert(Varchar(1000),CertifierTasks) As CertifierTasks , SOP, SOPVersion
+  --, Version, ProtocolCitation,[Version], VSID,ProtocolID,DeliverableID
+  FROM vwDeliverablesSchedule2
+  WHERE (DeliverableID = ",ID,")",sep=""))
+  row.names(Deliverable)=''
+  
+  cat("## ",as.character(Deliverable %>% select(Deliverable)),'  \n')
+  cat("  \n")
+  print(t(Deliverable))
+  cat("  \n")
+}
+
+```
+
+
+# Data Summary
+
+## Surveys History
+
+```{r echo=FALSE}
+# Get the survey details
+Sql = "SELECT [Year]
+      ,[StartDate]
+      ,[EndDate]
+      ,[ProtocolVersion]
+      ,[Records]
+      ,[SurveyDays]
+      ,[Loons]
+      ,[Pairs]
+      ,[Nests]
+      ,[Eggs]
+      ,[Chicks]
+      ,[Loons (Non-YBLO)]
+      ,[IncidentalObservations]
+      ,[Plots]
+      ,[Lakes]
+      ,[CertifiedRecords]
+      ,[CertificationDate]
+      ,[CertifiedBy]
+      ,[DeliverablesReferenceCode]
+      ,[ReportReferenceCode]
+      ,[DeliverablesURL]
+      ,[ReportURL]
+  FROM [ARCN_Loons].[dbo].[Dashboard]"
+Dashboard = dbGetQuery(Connection,Sql)
+Dashboard$CertificationDate = as.Date(Dashboard$CertificationDate)
+
+```
+```{r}
+knitr::kable(Dashboard %>% select(Year,Start=StartDate,End=EndDate,Days=SurveyDays))
+```
+
+
+
+## Reports and Deliverables
+
+```{r echo=FALSE}
+
+knitr::kable(Dashboard %>% 
+  mutate(across(everything(), ~replace(., is.na(.), ""))) %>%
+  mutate(
+    Report = paste0("[",ReportReferenceCode,"](https://irma.nps.gov/DataStore/Reference/Profile/",ReportReferenceCode,")"),
+    Deliverables= paste0("[",DeliverablesReferenceCode,"](https://irma.nps.gov/DataStore/Reference/Profile/",DeliverablesReferenceCode,")")
+  ) %>% 
+  select(Year,Report,Deliverables))
+
+```
+
+
+
+## Results Summary
+
+```{r echo=FALSE}
+
+# Get the survey details
+Sql = "SELECT * FROM Dashboard"
+Dashboard = dbGetQuery(Connection,Sql)
+
+knitr::kable(Dashboard %>% select(Year,Records,Loons,Pairs,Nests,Eggs,Chicks,Incidental = IncidentalObservations))
+
+```
+
+

@@ -1,0 +1,72 @@
+---
+title: ""
+author: ""
+date: ""
+format:
+  html:
+    toc: false        # Table of contents in HTML
+    theme: cosmo     # Bootstrap theme
+  typst:
+    toc: true
+    columns: 1
+---
+
+# NPS Yellow-billed Loons Dataset Summary
+
+## Arctic Inventory and Monitoring Network
+
+`r format(Sys.Date(), "%B %d, %Y")`
+
+
+Scott D. Miller\
+Information Technology Specialist/Data Manager\
+United States Department of the Interior\
+240 W. 5th Ave\
+Anchorage, AK 99501
+
+
+```{r setup , include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(janitor)
+library(odbc)
+library(sf)
+library(summarytools)
+
+# Set the report parameters here
+
+dir = paste0(r'(C:\Work\VitalSigns\ARCN Western Yellow-billed Loons\Data\Certified dataset\)')
+
+# Loons database connection
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Loons")
+
+# Retrieve the dataset
+Sql = paste0("SELECT * FROM Dataset_Certified ORDER BY IsIncidentalObservation, Year, Plot, Date, Species")
+data = dbGetQuery(Connection,Sql)
+
+```
+
+```{r,echo=FALSE,results='asis'}
+st_options(plain.ascii = FALSE, style = "grid", dfSummary.silent = TRUE)
+# Render dfSummary for inclusion in the report
+print(dfSummary(data,valid.col = FALSE), method = "render")
+```
+
+```{r,echo=FALSE,include=FALSE}
+# Write a data summary to file
+if(1==0){
+  st_options(plain.ascii = FALSE, style = "grid")  # nice HTML styling
+  sum <- dfSummary(data)
+  outfile = paste0(dir,"ARCN Loons Certified Dataset Summary.html")
+  print(sum, file = outfile)   # opens and saves; set file path as needed
+}
+
+# Or copy the output of this file
+dest = paste0(dir,"ARCN Loons Certified Dataset Summary.html")
+src = "ARCN Loons Certified Dataset Data Summary.html"
+file.copy(src,dest)
+
+
+```
+

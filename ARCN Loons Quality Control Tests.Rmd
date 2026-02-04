@@ -1,0 +1,193 @@
+---
+title: "ARCN Loons Monitoring Dataset Quality Control Report"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load libraries
+library(odbc)
+library(pointblank)
+library(tidyverse)
+library(xfun)
+
+# Using `validate_rmd()` here to enable validation mode for R Markdown
+# documents; options for the can be set here, as well
+validate_rmd()
+
+```
+
+```{r,include=FALSE}
+# Get the loons dataset from the master SQL Server database
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Loons")
+
+# Build a query
+Sql = "SELECT TOP 100 Percent Year, Park, Plot, Lake, Date, Species,CommonName,ScientificName, Loons
+, Convert(Int,IsNest) As IsNest
+, Convert(Int,IsPair) As IsPair
+, Chicks, Eggs, Location, Activity, SurveyType, IsIncidentalObservation, ObservationDateTime
+FROM Dataset_SurveyData
+ORDER BY Year, Plot, Lake, ObservationDateTime"
+
+# Execute the query
+data = dbGetQuery(Connection,Sql)
+
+# Fix the date column
+data$Date = as.Date(data$Date)
+
+
+data = data %>% select(Year,Plot,Lake,Date,Species,CommonName,ScientificName,Loons,IsNest,IsPair,Eggs,Chicks)
+# glimpse(data)
+
+`YBLO Dataset` = data # Rename the dataset in order to get a more informative report header from pointblank
+```
+
+# PointBlank Data Dictionary
+
+```{r}
+informant <-
+  create_informant(
+    tbl = `YBLO Dataset`,
+    tbl_name = "YBLO Certified Dataset",
+    label = "Data dictionary for the NPS Yellow-billed loons monitoring certified dataset."
+  )
+report <-
+  get_informant_report(
+    informant,
+    title = "Data Dictionary for YBLO Certified Dataset"
+  )
+report
+reportFile = "ARCN Loons Certified Dataset Data Dictionary.html"
+export_report(report,reportFile)
+```
+
+# PointBlank Scan
+
+[https://rstudio.github.io/pointblank/reference/scan_data.html](https://rstudio.github.io/pointblank/reference/scan_data.html)
+
+```{r}
+
+scanFile = "ARCN Loons Certified Dataset Quality Control PointBlank Scan Results.html"
+scan = scan_data(tbl=`YBLO Dataset`)
+scan
+export_report(scan,scanFile)
+```
+
+
+
+
+# PointBlank VALID-1 Interrogation
+
+[https://rstudio.github.io/pointblank/articles/VALID-I.html](https://rstudio.github.io/pointblank/articles/VALID-I.html)
+
+```{r,echo=FALSE,results='asis'}
+
+agent = create_agent(
+  tbl=data,
+  tbl_name = "SurveyData",
+  label="ARCN Loons Quality Control Tests") %>%
+  
+  #QC-01: Are the Species values known?
+  col_vals_in_set(
+    label="QC-01: Valid loon species codes?",
+    Species,c('ARLO','COLO','PALO','RTLO','YBLO','UNLO'),
+    brief='Test whether the species in the dataset correspond to correct list of target loons') %>%
+
+  # QC-02: Park should not be NULL
+  col_vals_not_null(
+    label="QC-02: Park should not be NULL",
+    columns = c('Park')
+  ) %>%
+  
+  # QC-03: Plot should not be NULL
+  col_vals_not_null(
+    label="QC-03: Plot should not be NULL",
+    columns = c('Plot')
+  ) %>%
+
+  # QC-04: Date should not be NULL
+  col_vals_not_null(
+    label="QC-04: Date should not be NULL",
+    columns = c('Date')
+  ) %>%
+  
+  # QC-05: Count should not be NULL
+  col_vals_not_null(
+    label="QC-05: Count should not be NULL",
+    columns = c('Loons')
+  ) %>%
+  
+  # QC-06: Lake should not be NULL
+  col_vals_not_null(
+    label="QC-06: Lake should not be NULL",
+    columns = c('Lake')
+  ) %>%
+  
+  # QC-07: Longitude should not be NULL
+  col_vals_not_null(
+    label="QC-07: Longitude should not be NULL",
+    columns = c('Longitude')
+  ) %>%
+  
+  # QC-08: Latitude should not be NULL
+  col_vals_not_null(
+    label="QC-08: Latitude should not be NULL",
+    columns = c('Latitude')
+  ) %>%
+  
+  # QC-09: Spatial coordinates likely out of bounds.
+  col_vals_expr(
+    label="QC-09: Spatial coordinates likely out of bounds.",
+    expr = expr(Latitude > 65.5 | Latitude < 67.9 | Longitude > -167.5 | Longitude < -162),
+  ) %>%
+  
+  # QC-10: IsNest = TRUE but IsPair = FALSE.
+  col_vals_expr(
+    label="QC-10: IsNest = TRUE but IsPair = FALSE.",
+    expr = expr(IsNest == 1 & IsPair == 0),
+  ) %>%
+  
+  interrogate()
+
+# view the agent
+agent
+
+# print the agent to file
+export_report(agent,'ARCN Loons Quality Control PointBlank VALID-1 Test Results.html')
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

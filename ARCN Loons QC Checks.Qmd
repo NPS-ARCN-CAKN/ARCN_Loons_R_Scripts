@@ -1,0 +1,264 @@
+---
+title: ""
+format:
+  typst:
+    toc: false
+    number-sections: false
+    columns: 1
+  html:
+    toc: true
+    number-sections: false
+
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+
+# Set up report parameters here
+SurveyYear = 2007  # Set this to the desired report year. 
+
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) # Prevent overwhelming messages from reaching user
+
+options(download.file.method = "wininet")
+# Make kable show blanks for NAs
+options(knitr.kable.NA = '')
+
+# Load libraries
+library(odbc)
+library(ggplot2)
+library(tidyverse)
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+library(janitor)
+library(english)
+
+# ODBC connection to the  monitoring SQL Server Database. 
+# Contact data manager for server and database details.
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Loons")
+
+# Current date
+CurrentDate = format(Sys.Date(), format='%B %d, %Y') # Get the current date
+
+# Function to convert a date string to a long date
+GetLongDate <- function(Date) {
+  return(format(as.Date(Date), format="%B %d, %Y"))
+}
+
+# These counters are used to number the tables and figures. Each gets incremented after use.
+TableCounter = 1
+FigureCounter = 1
+
+```
+
+```{r, echo=FALSE}
+data = dbGetQuery(Connection,paste0("SELECT * FROM Dataset_Certified WHERE Year = ",SurveyYear))
+```
+
+
+```{r, echo=FALSE,include=FALSE, message=FALSE,error=FALSE,results='hide'}
+
+# Spatial layers, Parks and Alaska
+Parks = st_read(r'(C:\Work\GIS Common Layers\GCS\AK_GCS.shp)') # 'https://irma.nps.gov/DataStore/DownloadFile/704836'
+AK = st_read(r'(C:\Work\GIS Common Layers\GCS\AKParks_reprojected.shp)') #'https://irma.nps.gov/DataStore/DownloadFile/746052'
+
+# Get the Plots spatial polygons from the database
+Plots <- st_read(
+  Connection,
+  query = "SELECT [Plot]
+,[PlotType]
+,[Year]
+,[Park]
+,PlotFeature.EnvelopeCenter().Lat as CenterLatitude
+,PlotFeature.EnvelopeCenter().Long as CenterLongitude
+,[PlotFeature].STAsBinary() AS geom
+--,Convert(varchar(100),Notes) as [Notes]
+FROM [ARCN_Loons].[dbo].[Plots]
+WHERE Year = 2025     
+ORDER BY Plot",
+  geometry_column = "geom"
+)
+
+# Set the CRS (e.g., WGS84 or Alaska Albers)
+Plots <- st_set_crs(Plots, 4326)  # or 3338 if using Alaska Albers
+
+
+```
+
+
+
+# Loon Survey Dataset Quality Control Checks, `r SurveyYear`
+
+## Summary
+
+```{r,echo=FALSE}
+# Get a survey summary
+summary = dbGetQuery(Connection,paste0("SELECT * FROM Dashboard WHERE Year = ",SurveyYear))
+
+knitr::kable(t(summary))
+TableCounter = TableCounter + 1
+```
+
+
+## QC-01: Missing Plot
+
+The observations shown below are missing one or both of Plot and Lake identifiers.
+
+```{r,echo=FALSE}
+Sql = paste0("SELECT Year,Plot,Lake,IsIncidentalObservation,ObservationDateTime FROM [QC_SurveyData_PlotIsNull] WHERE Year = ",SurveyYear)
+QC = dbGetQuery(Connection,Sql)
+
+if(nrow(QC) == 0){
+  print("PASSED. Zero records returned")
+} else {
+  print(paste0("FAILED. ",nrow(QC)," records.  \n\n"))
+  print(paste0("SQL: ",Sql,"  \n\n"))
+}
+
+
+```
+## QC-02: Missing Lake
+
+The observations shown below are missing one or both of Plot and Lake identifiers.
+
+```{r,echo=FALSE,fig.cap=paste0("Figure ",FigureCounter," Observations missing Plot or Lake attributes.")}
+Sql = paste0("SELECT Year, Plot, Lake, Date, Latitude, Longitude FROM QC_SurveyData_LakeIsNull WHERE Year = ",SurveyYear)
+QC = dbGetQuery(Connection,Sql)
+
+  # Get data filtered on Species
+  MapData = QC %>% mutate(Label = paste(Plot,'-',Lake,sep=""))
+
+  if(nrow(QC) > 0){
+    # Make the map
+    leaflet(MapData) %>%
+      addProviderTiles("USGS.USTopo", group = "USGS Topo") %>%  # Topo map
+      addProviderTiles("Esri.WorldImagery", group = "Imagery") %>% # Satellite imagery
+      # Add layer control to toggle between base maps
+      addLayersControl(baseGroups = c("USGS Topo", "Imagery"),options = layersControlOptions(collapsed = FALSE)) %>%
+      
+      # Points
+      addCircleMarkers(
+        lng = ~Longitude, 
+        lat = ~Latitude,
+        label= ~Label,
+        color = 'red',  # Assign colors by species
+        #fillColor = ~SpeciesColor,  # Fill colors by species
+        stroke=TRUE, weight = 1,
+        fillOpacity = 1,
+        radius=4,
+        labelOptions = labelOptions(
+            noHide = TRUE, 
+            direction = "auto",  # Tries to position labels optimally
+            fill = FALSE, 
+            offset = c(5,2), 
+            textsize = "11px", 
+            textOnly = TRUE,
+            style = list(
+                "color" = "black"
+                #"font-weight" = "bold",
+                #"text-shadow" = "1px 1px 1px white"
+            )
+          )
+      ) %>%
+      
+          # Load the plot polygons
+      addPolygons(data = Plots, color = "black", fillOpacity = 0, weight = 1) %>%
+    
+      
+      # Label the plot polygons
+      addLabelOnlyMarkers(data=Plots, lng = ~CenterLongitude, lat = ~CenterLatitude, label = ~Plot,
+        labelOptions = labelOptions(
+          style = list( "font-size" = "14px", "color" = "black", "text-shadow" = "2px 2px 4px white", "background" = "transparent"),
+          noHide = TRUE,    # Keeps labels always visible
+          textOnly = TRUE   # Removes unwanted white boxes
+        )) 
+
+  }
+  
+
+
+  
+```
+
+
+```{r,echo=FALSE,tab.cap=paste0("Table ",TableCounter," Non-incidental observations missing the Lake attribute.")}
+
+QC = dbGetQuery(Connection,Sql)
+if(nrow(QC) == 0){
+  QCResult = "PASSED. Zero records returned"
+} else {
+  QCResult = paste0("FAILED. ",nrow(QC)," records.")
+  #knitr::kable(QC )
+}
+  
+```
+
+`r QCResult`
+
+
+## QC-03: Missing Spatial Coordinates
+
+The observations shown below are missing spatial coordinates.
+
+```{r,echo=FALSE,tab.cap=paste0("Table ",TableCounter," Records missing spatial coordinates.")}
+Sql = paste0("SELECT [Year] ,[Plot] ,[Lake],IsIncidentalObservation,[ObservationDateTime],[ObservationID],[Latitude],[Longitude],[SourceFile]
+FROM [QC_SurveyData_PlotIsNull] WHERE Year = ",SurveyYear," AND (Latitude IS NULL OR Longitude IS NULL)")
+
+QC = dbGetQuery(Connection,Sql)
+if(nrow(QC) == 0){
+  QCResult = "PASSED. Zero records returned"
+} else {
+  QCResult = paste0("FAILED. ",nrow(QC)," records.")
+  knitr::kable(QC)
+}
+  
+```
+
+`r QCResult`
+
+## QC-04: Missing Personnel
+
+The observations shown below are missing one or more pilot/observer data.
+
+```{r,echo=FALSE,paste0("Table ",TableCounter," Records missing personnel.")}
+Sql = paste0("SELECT * FROM QC_SurveyData_MissingPilotOrObserverCountsByYear WHERE Year = ",SurveyYear)
+
+QC = dbGetQuery(Connection,Sql)
+if(nrow(QC) == 0){
+  QCResult = "PASSED. Zero records returned"
+} else {
+  QCResult = paste0("FAILED. ",nrow(QC)," records.")
+  knitr::kable(QC)
+}
+  
+```
+
+`r QCResult`
+
+## Results By Plot 
+
+A summary of loon observations by plot during the `r SurveyYear` survey appears in Table `r TableCounter`.
+
+```{r,echo=FALSE,include=FALSE,tab.cap=paste("Table ",TableCounter,". Summary of loon observations by plot.",sep="")}
+
+# Group and summarize the loons survey data
+SummaryData <- data %>%
+  filter(Year == SurveyYear) %>%
+  #filter(IsIncidentalObservation != 1 | is.na(IsIncidentalObservation)) %>%
+  group_by(Plot,Species) %>%
+  summarize(
+    `Loons` = sum(Count, na.rm = TRUE),
+    Pairs = sum(IsPair, na.rm = TRUE),
+    Eggs = sum(Eggs, na.rm = TRUE),
+    Chicks = sum(Chicks, na.rm = TRUE),
+    Nests = sum(IsNest, na.rm = TRUE),
+    n = n() 
+  ) %>%
+  mutate(Plot = as.numeric(Plot)) %>%  # Convert Plot to numeric  
+  arrange(Plot,Species)
+
+# Print results table
+knitr::kable(SummaryData %>% adorn_totals())
+
+TableCounter = TableCounter + 1
+```

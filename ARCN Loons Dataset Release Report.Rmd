@@ -1,0 +1,219 @@
+---
+title: "Data Release Report: 2009 Yellow-billed Loon Survey in Cape Krusenstern National Monument and Bering Land Bridge National Preserve, Alaska"
+output:
+  pdf_document:
+    toc: false          # Include table of contents
+    # number_sections: true  # Number sections
+    # fig_caption: true     # Enable figure captions
+    # latex_engine: xelatex # Use xelatex engine (optional)
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup,echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Setup
+options(knitr.kable.NA = '')
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(tidyverse)
+library(odbc)
+library(leaflet)
+
+# Build a database connection
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inp2300irmadb01\\ntwk", Database = "AKRO")
+DeliverablesSchedule = dbGetQuery(Connection,"SELECT Identifier, Deliverable, Description FROM vwDeliverablesSchedule2 WHERE (ProtocolID = 35) ORDER BY Identifier")
+```
+
+```{r echo=FALSE}
+
+dir = r'(C:\Work\VitalSigns\ARCN Western Yellow-billed Loons\Data\2009)'
+setwd(dir)
+
+
+# Use the below for sequentially numbering tables and figures
+QCCheckCounter = 1
+TableCounter = 1
+FigureCounter = 1
+```
+
+
+Scott D. Miller\
+Information Technology Specialist/Data Manager\
+National Park Service, Arctic Inventory and Monitoring Network\
+240 W. 5th Ave\
+Anchorage, AK 99501
+
+`r format(Sys.Date(), "%B %d, %Y")`
+
+# Abstract
+
+```{r,echo=FALSE}
+odata = read.csv(file.path(dir,'YB06 2009 YBLO Survey Occupancy Dataset.csv'))
+# glimpse(odata)
+pdata = read.csv(file.path(dir,'YB06 2009 YBLO Survey Productivity Dataset.csv'))
+# glimpse(pdata)
+
+OStartDate = min(odata$Date,na.rm=TRUE)
+OEndDate = max(odata$Date,na.rm=TRUE)
+PStartDate = pdata %>% filter(Date != '') %>% summarize(min(Date,na.rm=TRUE))
+PEndDate = max(pdata$Date,na.rm=TRUE)
+
+Abstract = paste0("The National Park Service conducted an aerial survey of Yellow-billed Loons in Cape Krusenstern National Monument and Bering Land Bridge National Preserve, Alaska. An occupancy survey was flown from ",OStartDate," to ",OEndDate," and a productivity survey was flown from ",PStartDate," to ",PEndDate,". This Data Release Report describes the deliverables published from this survey.")
+
+```
+
+`r Abstract`
+
+# Dataset Sensitivity Statement
+
+**[SENSITIVE DATASET]** NPS internal use only.
+
+The resource described in this report has been designated as a species
+of concern and is legally protected. The rules for dissemination for
+Yellow-billed loons specifically state (Koelsch, 2019):
+
+*"Legally Protected Under National Parks Omnibus Management Act, Section
+207, of 16 U.S.C. § 5937; Specific location (geographic coordinates) of
+this species of concern will not be released to the general public due
+to their global rarity and nest site fidelity. Any such data collected
+will be redacted from the publicly released datasets. This protects
+collaborating agencies data as well; but does not preclude sharing
+between collaborating agencies. Processed data with coordinates redacted
+(such as summaries, processed maps, or products) remain publicly
+available. This will be done indefinitely."*
+
+# Table of Contents
+
+\tableofcontents
+
+# Access
+
+The data release associated with this report is available from the NPS
+Data Store at the following URL:
+<https://irma.nps.gov/DataStore/Reference/Edit/2315500>.
+
+# License
+
+U.S. Government Works Data and content created by government employees
+within the scope of their employment are not subject to domestic
+copyright protection under 17 U.S.C. § 105. Government works not
+specifically designated for withholding by law are, by default, in the
+U.S. Public Domain.
+
+# Deliverables
+
+Data deliverables For this monitoring program are defined In Flamme
+M.J., J.H. Schmidt, J. Mizel and S.D. Miller. 2018. Yellow-billed loon
+monitoring protocol for the Arctic Network: Protocol narrative version
+1.0. Natural Resource Report. NPS/ARCN/NRR—2018/1738. National Park
+Service. Fort Collins, Colorado, Version 1.00, IRMA reference code
+2256435. This protocol Is available through the National Park Service's
+Integrated Resource Management Applications Data Store.
+
+## Deliverables Schedule
+
+```{r,echo=FALSE}
+knitr::kable(DeliverablesSchedule)
+
+```
+
+## Deliverable Specifications
+
+### YB01 Survey geodatabase (YBLO.gdb)
+
+Geodatabase containing processed QA/QC-checked survey data, including
+feature classes/layers of the loon and nest data. There is a different
+geodatabase for each year.
+
+### YB02 Park Observer files
+
+Folder containing iPad Park Observer .pov files and affiliated
+geodatabase containing the raw, field collected data prior to importing
+and processing those data in the GIS.
+
+### YB03 Waypoints
+
+Waypoints collected by the pilot or observer during a loon survey
+
+### YB04 Data collection forms, booklets and field notebooks
+
+Annotated data collection forms in data booklets and field notebooks
+generated during loon survey.
+
+### YB05 Certified database snapshot
+
+A snapshot of the loons monitoring certified dataset for publication.
+
+### YB06 Observations data file
+
+Deliverable YB06 consists of the digitized loons data collected during a
+survey. These data should be in comma separated values text file format.
+
+### YB07 Tracklogs
+
+Deliverable YB07 consists of the digitized tracklog data collected
+during a survey. These data should be in comma separated values text
+file format.
+
+### YB08 Lakes dataset
+
+Deliverable YB08 consists of a spatial data file containing the surveyed
+lakes polygons. These data should be in comma separated values text file
+format.
+
+### YB09 Plots dataset
+
+Deliverable YB09 consists of a spatial data file containing the surveyed
+Plot polygons. These data should be in comma separated values text file
+format.
+
+### YB10 Data collection forms
+
+Deliverable YB10 consists of physical paper data collection forms, if
+applicable.
+
+### YB11 Photographs
+
+Deliverable YB11 consists of photographs taken during a survey.
+
+# Summary of Datasets Created
+
+```{r, echo=FALSE}
+# Set the directory path
+directory_path = r'(C:\Work\VitalSigns\ARCN Western Yellow-billed Loons\Data\2009)'
+
+# List all files in the directory (non-recursive)
+files <- list.files(path = directory_path, full.names = TRUE)
+
+# Obtain file info including last modification time
+file_info <- file.info(files)
+
+# Build a data frame with filenames and timestamps
+result_df <- data.frame(
+  Filename = basename(files)                  # Extract just the filenames, without path
+  #Description = ''                 # Last modification time
+)
+
+# Print the resulting data frame
+knitr::kable(result_df %>% filter(Filename != 'Misc') %>% arrange(Filename))
+
+```
+
+
+# Data Quality Evaluation
+
+The data within the data records listed above have been reviewed by staff in the NPS Inventory and Monitoring Division to ensure accuracy, completeness, and consistency with documented data quality standards, as well as for usability and reproducibility. This dataset is suitable for its intended use as of the date of processing (`r format(Sys.Date(), "%B %d, %Y")`).
+
+# Methods
+
+See Flamme, et al. (2018) for methods.
+
+
+# References
+
+Flamme, M.J., J.H. Schmidt, J. Mizel and Miller, S.D. 2018. Yellow-billed loon monitoring protocol for the Arctic Network: Protocol narrative version 1.0. Natural Resource Report. NPS/ARCN/NRR—2018/1738. National Park Service. Fort Collins, Colorado [https://irma.nps.gov/DataStore/Reference/Profile/2256435](https://irma.nps.gov/DataStore/Reference/Profile/2256435)
+
+Koelsch J. 2019. To: Wald EJ. Re: Handling of Protected Natural Resource
+Data - BELA <https://irma.nps.gov/DataStore/Reference/Profile/2263477>

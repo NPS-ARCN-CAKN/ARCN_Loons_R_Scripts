@@ -1,0 +1,419 @@
+---
+title: ""
+format:
+  typst:
+    toc: false
+    columns: 1
+---
+
+```{r setup, include=FALSE, echo=FALSE,results='hide'}
+
+# Set up report parameters here
+SurveyYear = 2007  # Set this to the desired report year. 
+
+dir = paste0(r'(C:\Work\VitalSigns\ARCN Western Yellow-billed Loons\Data\)',SurveyYear)
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) # Prevent overwhelming messages from reaching user
+
+options(download.file.method = "wininet")
+# Make kable show blanks for NAs
+options(knitr.kable.NA = '')
+
+#install.packages("sqldf")
+# Load libraries
+library(odbc)
+library(ggplot2)
+library(ggtext)
+library(tidyverse)
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+library(janitor)
+library(english)
+
+# ODBC connection to the  monitoring SQL Server Database. 
+# Contact data manager for server and database details.
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Loons")
+
+# Current date
+CurrentDate = format(Sys.Date(), format='%B %d, %Y') # Get the current date
+
+# Function to convert a date string to a long date
+GetLongDate <- function(Date) {
+  return(format(as.Date(Date), format="%B %d, %Y"))
+}
+
+# These counters are used to number the tables and figures. Each gets incremented after use.
+TableCounter = 1
+FigureCounter = 1
+
+```
+
+```{r,echo=FALSE,name='Get the data',results='hide'}
+# Get the survey details
+Sql = paste0("SELECT [Year]
+      ,[SurveyName]
+      ,[DeliverablesReferenceCode]
+      ,Convert(Varchar(4000),[Abstract]) as Abstract
+      ,Convert(Varchar(4000),[Notes]) as Notes
+      ,[RecordInsertedDate]
+      ,[RecordInsertedBy]
+      ,[ReportReferenceCode]
+      ,[Personnel]
+      ,[ProtocolVersion]
+      ,[DataQualityNotes]
+  FROM [ARCN_Loons].[dbo].[Surveys] WHERE [Year] = ",SurveyYear)
+SurveyDetails = dbGetQuery(Connection,Sql)
+
+
+# Get the entire survey dataset
+SurveyDataSql = paste("SELECT  [Year]
+      ,[Park]
+      ,[Plot]
+      ,[Lake]
+      ,[Date]
+      ,[Species]
+      ,[ScientificName]
+      ,[CommonName]
+      ,[Loons]
+      ,[Nests]
+      ,[Pairs]
+      ,[Chicks]
+      ,[Eggs]
+      ,[Location]
+      ,[Activity]
+      ,[IsIncidentalObservation]
+      ,[IsNest]
+      ,[IsPair]
+      ,[SurveyType]
+      ,[LakeType]
+      ,[Latitude]
+      ,[Longitude]
+      ,[Notes]
+      ,[ObservationID]
+  FROM [ARCN_Loons].[dbo].[Dataset_SurveyData]
+  WHERE [Year] = ",SurveyYear,"
+  ORDER BY [Year],Plot,Lake,[Date]",sep="")
+
+# Get the survey data
+data = dbGetQuery(Connection,SurveyDataSql)
+
+# Publish a dataset, if needed
+if(1==0){
+  YB06 = dbGetQuery(Connection,paste0("SELECT * FROM Dataset_Certified WHERE Year = ",SurveyYear))
+  YB06File <- paste0(dir,"/YB06 ",SurveyYear," ARCN Loons Survey Data.csv")
+  write.csv(YB06,YB06File,quote=TRUE,na="",row.names = FALSE)
+}
+
+
+# Spatial layers, Parks and Alaska
+# Parks = st_read('https://irma.nps.gov/DataStore/DownloadFile/704836')
+#AK = st_read('https://irma.nps.gov/DataStore/DownloadFile/746052')
+GISPath = r'(C:\Work\GIS Common Layers\GCS\)'
+Parks = st_read(paste0(GISPath,'AKParks_reprojected.shp'))
+AK = st_read(paste0(GISPath,'AK_GCS.shp'))
+
+# Get the Plots spatial polygons from the database
+Plots <- st_read(
+  Connection,
+  query = "
+    SELECT 
+      Year, Plot, Park, PlotType, 
+      PlotFeature.STAsBinary() AS geom
+    FROM Plots
+    WHERE Year = 2025
+    ORDER BY Plot",
+  geometry_column = "geom"
+)
+
+
+# Group and summarize the loons survey data
+ResultsSummary <- data %>%
+  filter(IsIncidentalObservation != 1 | is.na(IsIncidentalObservation)) %>%
+  group_by(`Common name` = CommonName) %>%
+  summarize(
+    `Loons` = sum(Loons, na.rm = TRUE),
+    Pairs = sum(IsPair, na.rm = TRUE),
+    Nests = sum(IsNest, na.rm = TRUE),
+    Eggs = sum(Eggs, na.rm = TRUE),
+    Chicks = sum(Chicks, na.rm = TRUE),
+    #`Eggs/nest` = ifelse(is.nan(sum(Eggs, na.rm = TRUE)/sum(IsNest, na.rm = TRUE)), 0, sum(Eggs, na.rm = TRUE)/sum(IsNest, na.rm = TRUE)),
+    #`Chicks/nest`= ifelse(is.nan(sum(Chicks, na.rm = TRUE)/sum(IsNest, na.rm = TRUE)), 0, sum(Chicks, na.rm = TRUE)/sum(IsNest, na.rm = TRUE)),
+    n = n()
+  )
+
+# Set the CRS (e.g., WGS84 or Alaska Albers)
+Plots <- st_set_crs(Plots, 4326)  # or 3338 if using Alaska Albers
+
+```
+
+```{r echo=FALSE}
+# Generate an abstract
+# The abstract is stored in the database Surveys table, but it does not always exist. If it exists, use it in the report, otherwise generate one on the fly (consider updating the database with it afterwards)
+GeneratedAbstract = paste0(
+"National Park Service (NPS) biologists conducted an aerial survey for loons over "
+,as.character(english(as.numeric(data %>% summarize(n_distinct(as.Date(Date))))))," flying days from "
+,GetLongDate(as.character(data %>% summarize(as.character(min(as.Date(Date),na.rm=TRUE)))))," to "
+,GetLongDate(as.character(data %>% summarize(as.character(max(as.Date(Date),na.rm=TRUE)))))," in the Seward Peninsula and Cape Krusenstern area of 
+Western Alaska. Biologists surveyed ",
+english(data %>% filter(Species=='YBLO') %>% summarize(Plots = n_distinct(Plot,na.rm=TRUE)) %>% pull(Plots))," 12km x 12km Yellow-billed Loon monitoring 
+plots and observed "
+,ResultsSummary %>% summarize(Loons=sum(Loons)) %>% pull(Loons)," loons of "
+,english(data %>% filter(Species != 'UNLO') %>% summarize(nSp = n_distinct(Species,na.rm=TRUE)) %>% pull(nSp))," species, "
+,data %>% summarize(nPairs = sum(IsPair,na.rm=TRUE))," nesting pairs, "
+,data %>% summarize(nNests = sum(IsNest,na.rm=TRUE))," nests, "
+,data %>% summarize(nEggs = sum(Eggs,na.rm=TRUE))," eggs in "
+,data %>% summarize(n = n())," observations. ",
+"In terms of Yellow-billed loons, the primary loon of interest to the NPS, biologists observed "
+,data %>% filter(Species == 'YBLO') %>% summarize(nLoon = sum(Loons,na.rm=TRUE))," loons, "
+,data %>% filter(Species == 'YBLO') %>% summarize(nPairs = sum(IsPair,na.rm=TRUE))," nesting pairs, "
+,data %>% filter(Species == 'YBLO') %>% summarize(nNests = sum(IsNest,na.rm=TRUE))," nests, "
+,data %>% filter(Species == 'YBLO') %>% summarize(nEggs = sum(Eggs,na.rm=TRUE))," eggs in "
+,data %>% filter(Species == 'YBLO') %>% summarize(n = n())," observations."
+)
+
+
+# Execute this Update query against the database to update the Surveys.Abstract attribute for this survey record.
+#UpdateAbstractSQL = paste0("UPDATE Surveys Set Abstract = '",gsub("'","''",GeneratedAbstract),"' WHERE Year = ",SurveyYear)
+
+# Determine which abstract to use, the database one, or a generated on the fly one.
+if(is.na(SurveyDetails$Abstract) == TRUE | SurveyDetails$Abstract == ''){
+  Abstract = GeneratedAbstract
+}else{
+  Abstract = SurveyDetails$Abstract
+}
+
+
+```
+
+# Yellow-billed Loon Survey Summary, `r SurveyYear`
+
+## National Park Service
+
+### Arctic Inventory and Monitoring Network
+
+Scott D. Miller\
+U.S. Department of the Interior\
+240 W. 5th Ave Anchorage\
+Alaska 99501
+
+`r CurrentDate`
+
+# Abstract
+
+`r Abstract`
+
+**Keywords:** Yellow-billed Loon, Loon, Monitoring, Population, Abundance, Alaska, Productivity, Occupancy, *Gavia adamsii*, coastal, `r SurveyYear`
+
+# Introduction
+
+The National Park Service monitors the abundance and productivity of loons in Bering Land Bridge National Preserve (BELA) and Cape Krusenstern National Monument (CAKR) in western Alaska. 
+This report summarizes the results of a Yellow-billed Loon *(Gavia adamsii)* aerial survey conducted in `r SurveyYear` by the Arctic Inventory and Monitoring Network (ARCN) in and around 
+Bering Land Bridge National Preserve and Cape Krusenstern National Monument.
+
+Yellow-billed Loons are a species of concern due to their small global population. Their breeding range spans the arctic tundra regions of Russia, Canada, and Alaska. 
+In Alaska, nesting is primarily restricted to the Arctic Coastal Plain (north of the Brooks Range) and western Alaska, particularly on or near the Seward Peninsula. 
+This survey contributes to the NPS' long-term loons monitoring dataset, providing valuable insights into the abundance of Yellow-billed Loons in western Alaska.
+
+# Methods
+
+NPS biologists followed ARCN's established protocol and standard operating procedures ([Flamme et al., 2018](https://irma.nps.gov/DataStore/Reference/Profile/2216938)) in this survey
+and readers are referred to that document for detailed descriptions of methods used. NPS surveyed all lakes \>7 ha in size in the study area using the U.S. Fish and Wildlife Service's 
+lake-circling methods and established random plots for this aerial survey to optimize detection of Yellow-billed Loons in their nesting habitats. 
+Two pilot-observers teams in tandem fixed-wing aircraft conduct repeat surveys of the plots scattered across the two park units. 
+Flights were conducted at an altitude of less than 500 feet and all five species of loons encountered (Yellow-billed, Common, Red-throated, Pacific and Arctic) and their nests are recorded.
+
+## Survey Dates
+
+```{r,echo=FALSE,tab.cap=paste("Table ",TableCounter,". Survey dates.",sep="")}
+# Survey dates
+SurveyDatesSummaryDF = data %>% summarize(
+    Start = min(Date,na.rm=TRUE),
+    End = max(Date,na.rm=TRUE),
+    Days = n_distinct(Date,na.rm=TRUE)
+  )
+SurveyDatesSummary = paste0("The ",SurveyYear," loon survey took place over ",SurveyDatesSummaryDF$Days," days from ",GetLongDate(SurveyDatesSummaryDF$Start)," to ",GetLongDate(SurveyDatesSummaryDF$End),".")
+# knitr::kable(t(SurveyDatesSummary))
+# TableCounter = TableCounter + 1
+```
+`r SurveyDatesSummary`
+
+## Survey Area
+
+The survey area includes 13,572 km2 of potential Yellow-billed Loon habitat in portions of BELA and CAKR in western Alaska.
+
+```{r, echo=FALSE,fig.cap=paste0("Figure ",FigureCounter,". Map of the ",SurveyYear," aerial loon survey area showing Cape Krusenstern National Monument (coastal park in green, north) and Bering Land Bridge National Preserve, in green, south) with standard 12x12km monitoring plots as gray squares.")}
+
+# Get bounding box of the Plots layer
+bbox <- st_bbox(Plots)
+buffer = 0.1
+
+# Plot stuff
+ggplot() +
+  
+  # Alaska polygon
+  geom_sf(data = AK, fill = "white", color = "gray80", alpha = 0.5) +
+  
+  # Parks polygons
+  geom_sf(data = Parks, fill = "palegreen4", color = NA, alpha = 0.2) +
+
+  # Plot polygons
+  geom_sf(data = Plots, fill = NA, color = "gray40", alpha = 0.3,size=0.1) +
+  geom_sf_text(data = Plots, aes(label = Plot), size = 3, color = "gray40") +
+
+    # Park labels
+  annotate("text", x = -164.2, y = 67.6, label = "Cape Krusenstern\nNational Monument",size = 3, color = "black", angle = 0,fontface='bold') +
+  annotate("text", x = -164.5, y = 65.8, label = "Bering Land Bridge National Preserve",size = 3, color = "black", angle = 0,fontface='bold') +
+  
+  # Bounding box restriction
+  coord_sf(
+    xlim = c(bbox["xmin"] - buffer, bbox["xmax"] + buffer),
+    ylim = c(bbox["ymin"] - buffer, bbox["ymax"] + buffer),
+    expand = FALSE
+  ) +
+  
+  # Theming
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightsteelblue1"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(title = paste0(SurveyYear," Loon Survey Study Area"),
+    x='Longitude',
+    y='Latitude')
+
+FigureCounter = FigureCounter + 1
+```
+
+# Results
+
+## Observations Summary
+
+A summary of loon observations during the `r SurveyYear` survey appears in Table `r TableCounter`.
+
+```{r,echo=FALSE,tab.cap=paste("Table ",TableCounter,". Summary of loon observations.",sep="")}
+
+
+# Print results table
+ResultsSummary %>%
+  adorn_totals() %>%
+  mutate(across(where(is.numeric), ~ round(., 2))) %>%
+  knitr::kable()
+
+TableCounter = TableCounter + 1
+```
+
+## Distribution By Species
+
+The distribution of loon observations and nest locations  by species during the `r SurveyYear` loon survey in BELA and CAKR are presented below.
+
+```{r,echo=FALSE,include=FALSE}
+
+GetLoonDistributionMap2 = function(LoonSpecies,FigureNumber){
+  # Plot loon observations
+  MapData = data=data %>% filter(Species == LoonSpecies & Species != 'UNLO')
+  
+  # Get the common and sci names of the LoonSpecies parameter
+  CommonName = MapData[1,'CommonName']
+  ScientificName = MapData[1,'ScientificName']
+  
+  # Make a map title
+  MapTitle = paste0(CommonName," Observations")
+  
+  # Make a map caption
+  FigureCaption = paste0("Figure ",FigureNumber,". Distribution of ",CommonName," (*",ScientificName,"*) observations.\nLoon sightings shown as small black triangles and nest locations as blue squares.")
+
+  # Build a map of loon observations
+  map = ggplot(MapData) +
+    
+    # Alaska and Park polygon layers
+    geom_sf(data = AK, fill = "white", color = "gray80", alpha = 0.5) +
+    geom_sf(data = Parks, fill = "palegreen4", color = NA, alpha = 0.2) +
+  
+    # Plot polygons
+    geom_sf(data = Plots, fill = NA, color = "gray80", alpha = 0.3,size=0.1) +
+    geom_sf_text(data = Plots, aes(label = Plot), size = 3, color = "gray70") +
+    
+    # Observations
+    geom_point(aes(x=Longitude,y=Latitude),color='black',size=0.5,shape=17) +
+    
+    # Nests
+    geom_point(data = data %>% filter(Species == LoonSpecies & IsNest == 1), aes(x=Longitude,y=Latitude),color='royalblue1',size=1,shape=15) +
+    
+    # Label the parks
+    annotate("text", x = -164.2, y = 67.6, label = "Cape Krusenstern\nNational Monument",size = 3, color = "gray40", angle = 0) +
+    annotate("text", x = -164, y = 65.8, label = "Bering Land Bridge National Preserve",size = 3, color = "gray40", angle = 0) +
+    
+    # Bounding box restriction
+    coord_sf(
+      xlim = c(bbox["xmin"] - buffer, bbox["xmax"] + buffer),
+      ylim = c(bbox["ymin"] - buffer, bbox["ymax"] + buffer),
+      expand = FALSE
+    ) +
+    
+    # Labels
+    labs(
+      title = MapTitle,
+      caption = FigureCaption) +
+    
+    # Theming
+    theme_minimal() +
+    theme(
+      panel.background = element_rect(fill = "lightsteelblue1"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      plot.caption.position = "plot", 
+      plot.caption = element_markdown(hjust = 0)
+    )
+  
+  return(map)
+}
+# GetLoonDistributionMap2('YBLO',33)
+# GetLoonDistributionMap2('RTLO',34)
+
+```
+
+```{r,echo=FALSE,results='asis'}
+SpeciesList <- data %>%
+  filter(Species != 'UNLO') %>%
+  distinct(Species) %>%
+  arrange(Species) %>%
+  pull(Species)  # Extracts as a character vector
+
+for (Sp in SpeciesList) {
+  # Print the loon species name as a header
+  CommonName = as.character(data %>% filter(Species == Sp) %>% distinct(Species,CommonName) %>% select(CommonName))
+  cat("  \n",sep="")
+  cat("### ",CommonName,"  \n\n",sep="")
+  cat("The distribution of ",CommonName," observations and nest locations are shown in Figure ",FigureCounter,", below. Observations are shown as black triangles and nest locations as blue squares.  \n",sep="")
+  cat("  \n",sep="")
+  cat("  \n",sep="")
+  # Print the loon distribution map
+  print(GetLoonDistributionMap2(Sp,FigureCounter))
+  cat("  \n",sep="")
+  
+  # Increment the figure counter
+  FigureCounter = FigureCounter + 1
+}
+
+```
+
+# References
+
+Flamme, M.J., J.H. Schmidt, J. Mizel and S.D. Miller. 2018. Yellow-billed loon monitoring protocol for the Arctic Network: Protocol narrative version 1.0. Natural Resource Report. NPS/ARCN/NRR—2018/1738. National Park Service. Fort Collins, Colorado <https://irma.nps.gov/DataStore/Reference/Profile/2256435>
+
+
+
+```{r,include= FALSE}
+# Copy the report to the loon directory
+src =  paste0(getwd(),"/ARCN Loons Survey Summary Report.pdf")
+dst <- paste0(dir,"/",SurveyYear," ARCN Loons SurveySummary Report.pdf")
+dst2 <- paste0(getwd(),"/",SurveyYear," ARCN Loons SurveySummary Report.pdf")
+cat("Source file : ",src," exists: ",file.exists(src))
+if (file.exists(src)) {
+  file.copy(src, dst, overwrite = TRUE)
+  file.copy(src, dst2, overwrite = TRUE)
+}
+
+```
